@@ -1,145 +1,396 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
-const SAMPLE_TEXTS = [
-  'practice makes progress and progress creates confidence',
-  'typing quickly and accurately is a skill that improves with repetition',
-  'focus on rhythm clarity and calm breathing while you type',
-  'small daily practice turns hesitant keystrokes into smooth accuracy',
-  'a good typing habit starts with patience and consistent effort',
-  'learn to steady your hands and let your eyes stay ahead of the text',
-  'strong typing performance depends on speed precision and control',
-  'every mistake is feedback that helps you improve your technique',
-  'the best way to grow is to test yourself and keep moving forward',
-  'clean keystrokes and good posture support faster more accurate work',
-]
+const MODE_CONFIG = {
+  easy: { label: 'Easy', time: 60, wordCount: 16 },
+  medium: { label: 'Medium', time: 45, wordCount: 22 },
+  hard: { label: 'Hard', time: 30, wordCount: 30 },
+}
 
-const DEFAULT_TIME = 60
+const WORD_LISTS = {
+  casual: [
+    'sunrise', 'garden', 'coffee', 'breeze', 'library', 'pencil', 'whisper',
+    'candle', 'lantern', 'forest', 'moment', 'rainy', 'silver', 'bright',
+    'smile', 'travel', 'riverside', 'harmony', 'window', 'magnet', 'reliable',
+    'gentle', 'meadow', 'sunset', 'starlight', 'journey', 'courage'
+  ],
+  programming: [
+    'function', 'component', 'render', 'state', 'array', 'object', 'callback',
+    'debug', 'module', 'promise', 'async', 'class', 'method', 'string',
+    'boolean', 'branch', 'commit', 'terminal', 'server', 'router', 'token',
+    'layout', 'event', 'canvas', 'variable', 'interface', 'deploy', 'cache'
+  ],
+  productivity: [
+    'focus', 'schedule', 'routine', 'priority', 'plan', 'review', 'system',
+    'workflow', 'checklist', 'meeting', 'summary', 'strategy', 'energy',
+    'discipline', 'habit', 'calendar', 'timing', 'resource', 'clarity',
+    'progress', 'momentum', 'target', 'execution', 'balance', 'sprint', 'track'
+  ],
+  mixed: [
+    'rocket', 'signal', 'planet', 'circuit', 'stream', 'pixel', 'sprint',
+    'fusion', 'marble', 'forest', 'window', 'cobalt', 'future', 'orbit',
+    'horizon', 'silver', 'signal', 'function', 'design', 'moment', 'focus',
+    'coffee', 'energy', 'balance', 'compress', 'tracking', 'practice', 'planet'
+  ],
+}
 
-function generateText() {
-  const wordCount = 18 + Math.floor(Math.random() * 8)
+const LEADERBOARD_KEY = 'typing-game-leaderboard'
+
+function getStoredScores() {
+  if (typeof window === 'undefined') return []
+
+  try {
+    const saved = window.localStorage.getItem(LEADERBOARD_KEY)
+    const parsed = saved ? JSON.parse(saved) : []
+    return Array.isArray(parsed) ? parsed : []
+  } catch (error) {
+    return []
+  }
+}
+
+function buildText(listName, modeName) {
+  const source = WORD_LISTS[listName] ?? WORD_LISTS.mixed
+  const mode = MODE_CONFIG[modeName] ?? MODE_CONFIG.medium
+
   const words = []
-
-  for (let i = 0; i < wordCount; i += 1) {
-    const source = SAMPLE_TEXTS[Math.floor(Math.random() * SAMPLE_TEXTS.length)]
-    const candidates = source.split(' ')
-    const randomWord = candidates[Math.floor(Math.random() * candidates.length)]
-    words.push(randomWord)
+  for (let i = 0; i < mode.wordCount; i += 1) {
+    words.push(source[Math.floor(Math.random() * source.length)])
   }
 
   return words.join(' ')
 }
 
+function computeAccuracy(correct, typed) {
+  if (!typed) return 100
+  return Math.round((correct / typed) * 100)
+}
+
+function computeWpm(correctChars, elapsedSeconds) {
+  const safeSeconds = elapsedSeconds > 0 ? elapsedSeconds : 1
+  const minutes = safeSeconds / 60
+  return Math.round((correctChars / 5) / minutes)
+}
+
 function App() {
-  const [text, setText] = useState(() => generateText())
+  const audioContextRef = useRef(null)
+  const inputRef = useRef(null)
+
+  const [screen, setScreen] = useState('menu')
+  const [selectedMode, setSelectedMode] = useState('medium')
+  const [selectedList, setSelectedList] = useState('mixed')
+  const [text, setText] = useState(() => buildText('mixed', 'medium'))
   const [input, setInput] = useState('')
-  const [timeLeft, setTimeLeft] = useState(DEFAULT_TIME)
+  const [timeLeft, setTimeLeft] = useState(MODE_CONFIG.medium.time)
   const [isRunning, setIsRunning] = useState(false)
   const [completed, setCompleted] = useState(false)
   const [correctChars, setCorrectChars] = useState(0)
   const [typedChars, setTypedChars] = useState(0)
-  const inputRef = useRef(null)
+  const [leaderboard, setLeaderboard] = useState(() => getStoredScores())
+  const [lastResult, setLastResult] = useState(null)
+
+  const modeConfig = MODE_CONFIG[selectedMode] ?? MODE_CONFIG.medium
+
+  const accuracy = useMemo(
+    () => computeAccuracy(correctChars, typedChars),
+    [correctChars, typedChars],
+  )
+
+  const currentWpm = useMemo(() => {
+    if (!isRunning && !completed && !input.length) return 0
+    const elapsed = modeConfig.time - timeLeft
+    return computeWpm(correctChars, elapsed || 1)
+  }, [correctChars, completed, input.length, isRunning, modeConfig.time, timeLeft])
 
   useEffect(() => {
-    if (!isRunning || completed) return
+    if (screen === 'menu') return
+    inputRef.current?.focus()
+  }, [screen])
 
-    const timer = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          clearInterval(timer)
+  useEffect(() => {
+    if (screen !== 'game' || !isRunning || completed) return
+
+    const timer = window.setInterval(() => {
+      setTimeLeft((previous) => {
+        if (previous <= 1) {
+          window.clearInterval(timer)
           setIsRunning(false)
           setCompleted(true)
+          setScreen('summary')
           return 0
         }
-        return prev - 1
+
+        return previous - 1
       })
     }, 1000)
 
-    return () => clearInterval(timer)
-  }, [isRunning, completed])
+    return () => window.clearInterval(timer)
+  }, [screen, isRunning, completed])
 
   useEffect(() => {
-    if (!completed) return
-    inputRef.current?.blur()
-  }, [completed])
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem(LEADERBOARD_KEY, JSON.stringify(leaderboard))
+  }, [leaderboard])
 
-  const accuracy = useMemo(() => {
-    if (!typedChars) return 100
-    return Math.round((correctChars / typedChars) * 100)
-  }, [correctChars, typedChars])
+  const ensureAudioContext = () => {
+    if (typeof window === 'undefined') return null
 
-  const wpm = useMemo(() => {
-    if (timeLeft === DEFAULT_TIME && !isRunning && !completed && typedChars === 0) return 0
-    const secondsElapsed = DEFAULT_TIME - timeLeft
-    const minutes = secondsElapsed / 60 || 1 / 60
-    return Math.round((correctChars / 5) / minutes)
-  }, [correctChars, timeLeft, isRunning, completed, typedChars])
+    const AudioConstructor = window.AudioContext || window.webkitAudioContext
+    if (!AudioConstructor) return null
 
-  const handleInput = (event) => {
-    if (completed) return
-
-    const nextValue = event.target.value
-    setInput(nextValue)
-
-    if (!isRunning) {
-      setIsRunning(true)
+    if (!audioContextRef.current) {
+      audioContextRef.current = new AudioConstructor()
     }
 
-    let correct = 0
-    let typed = 0
-
-    for (let i = 0; i < nextValue.length; i += 1) {
-      typed += 1
-      if (nextValue[i] === text[i]) {
-        correct += 1
-      }
+    if (audioContextRef.current.state === 'suspended') {
+      audioContextRef.current.resume()
     }
 
-    setTypedChars(typed)
-    setCorrectChars(correct)
-
-    if (nextValue === text) {
-      setCompleted(true)
-      setIsRunning(false)
-    }
+    return audioContextRef.current
   }
 
-  const handleRestart = () => {
-    setText(generateText())
+  const playTone = (frequency, duration, type = 'sine', volume = 0.04) => {
+    const ctx = ensureAudioContext()
+    if (!ctx) return
+
+    const oscillator = ctx.createOscillator()
+    const gain = ctx.createGain()
+
+    oscillator.type = type
+    oscillator.frequency.value = frequency
+    gain.gain.value = volume
+
+    oscillator.connect(gain)
+    gain.connect(ctx.destination)
+
+    oscillator.start()
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + duration)
+    oscillator.stop(ctx.currentTime + duration)
+  }
+
+  const playFeedback = (status) => {
+    if (status === 'correct') {
+      playTone(620, 0.06, 'triangle', 0.045)
+      return
+    }
+
+    if (status === 'incorrect') {
+      playTone(180, 0.08, 'sawtooth', 0.05)
+      return
+    }
+
+    playTone(780, 0.1, 'triangle', 0.05)
+    playTone(940, 0.12, 'triangle', 0.05)
+  }
+
+  const resetRound = (mode = selectedMode, list = selectedList) => {
+    const modeSettings = MODE_CONFIG[mode] ?? MODE_CONFIG.medium
+    setText(buildText(list, mode))
     setInput('')
-    setTimeLeft(DEFAULT_TIME)
+    setTimeLeft(modeSettings.time)
     setIsRunning(false)
     setCompleted(false)
     setCorrectChars(0)
     setTypedChars(0)
-    inputRef.current?.focus()
+    setLastResult(null)
   }
 
-  const renderText = () => {
-    return text.split('').map((char, index) => {
-      let className = 'char'
+  const startGame = () => {
+    ensureAudioContext()
+    resetRound(selectedMode, selectedList)
+    setScreen('game')
+  }
+
+  const saveScore = (scoreValue) => {
+    const nextBoard = [...leaderboard, scoreValue]
+      .sort((first, second) => second.wpm - first.wpm || second.accuracy - first.accuracy)
+      .slice(0, 5)
+
+    setLeaderboard(nextBoard)
+  }
+
+  const finishGame = (value) => {
+    if (completed) return
+
+    setIsRunning(false)
+    setCompleted(true)
+    setScreen('summary')
+
+    const charTotal = value.length
+    const correctTotal = value.split('').reduce((count, char, index) => {
+      if (char === text[index]) return count + 1
+      return count
+    }, 0)
+
+    const finalAccuracy = computeAccuracy(correctTotal, charTotal)
+    const elapsedSeconds = MODE_CONFIG[selectedMode].time - timeLeft || 1
+    const finalWpm = computeWpm(correctTotal, elapsedSeconds)
+
+    const result = {
+      id: Date.now(),
+      wpm: finalWpm,
+      accuracy: finalAccuracy,
+      mode: selectedMode,
+      list: selectedList,
+      timestamp: new Date().toISOString(),
+    }
+
+    playFeedback('finish')
+    setLastResult(result)
+    saveScore(result)
+  }
+
+  const handleTyping = (event) => {
+    if (screen !== 'game' || completed) return
+
+    const nextValue = event.target.value
+    const previousValue = input
+
+    if (!isRunning && nextValue.length > 0) {
+      ensureAudioContext()
+      setIsRunning(true)
+    }
+
+    let corrected = 0
+    for (let index = 0; index < nextValue.length; index += 1) {
+      if (nextValue[index] === text[index]) corrected += 1
+    }
+
+    setInput(nextValue)
+    setCorrectChars(corrected)
+    setTypedChars(nextValue.length)
+
+    if (nextValue.length > previousValue.length) {
+      const lastTypedChar = nextValue[nextValue.length - 1]
+      const expectedChar = text[nextValue.length - 1]
+      playFeedback(lastTypedChar === expectedChar ? 'correct' : 'incorrect')
+    }
+
+    if (nextValue === text) {
+      finishGame(nextValue)
+    }
+  }
+
+  const handleModeChange = (event) => {
+    const nextMode = event.target.value
+    setSelectedMode(nextMode)
+    if (screen === 'menu') {
+      setTimeLeft(MODE_CONFIG[nextMode].time)
+    }
+  }
+
+  const handleListChange = (event) => {
+    setSelectedList(event.target.value)
+  }
+
+  const goToMenu = () => {
+    setScreen('menu')
+    setInput('')
+    setIsRunning(false)
+    setCompleted(false)
+    setCorrectChars(0)
+    setTypedChars(0)
+    setTimeLeft(MODE_CONFIG[selectedMode].time)
+  }
+
+  const renderPrompt = () =>
+    text.split('').map((char, index) => {
+      const classes = ['char']
 
       if (index < input.length) {
-        className += input[index] === char ? ' correct' : ' incorrect'
-      } else if (index === input.length) {
-        className += ' current'
+        classes.push(input[index] === char ? 'correct' : 'incorrect')
+      } else if (index === input.length && screen === 'game') {
+        classes.push('current')
       }
 
       return (
-        <span key={`${char}-${index}`} className={className}>
+        <span key={`${char}-${index}`} className={classes.join(' ')}>
           {char}
         </span>
       )
     })
+
+  if (screen === 'menu') {
+    return (
+      <main className="app-shell">
+        <section className="landing-card">
+          <div className="brand-block">
+            <span className="eyebrow">React typing challenge</span>
+            <h1>TypeRush</h1>
+            <p>
+              Train your speed, sharpen your focus, and chase the top score.
+            </p>
+          </div>
+
+          <div className="menu-panel">
+            <div className="field-group">
+              <label htmlFor="modeSelect">Difficulty</label>
+              <select id="modeSelect" value={selectedMode} onChange={handleModeChange}>
+                {Object.entries(MODE_CONFIG).map(([value, config]) => (
+                  <option key={value} value={value}>
+                    {config.label} · {config.time}s
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="field-group">
+              <label htmlFor="listSelect">Word list</label>
+              <select id="listSelect" value={selectedList} onChange={handleListChange}>
+                <option value="casual">Casual</option>
+                <option value="programming">Programming</option>
+                <option value="productivity">Productivity</option>
+                <option value="mixed">Mixed</option>
+              </select>
+            </div>
+
+            <button type="button" className="primary-button" onClick={startGame}>
+              Start game
+            </button>
+          </div>
+
+          <div className="leaderboard-panel">
+            <div className="panel-header">
+              <h2>Leaderboard</h2>
+              <span>Top 5</span>
+            </div>
+
+            {leaderboard.length === 0 ? (
+              <p className="empty-state">No scores yet. Finish your first run to set the pace.</p>
+            ) : (
+              <ol className="leaderboard-list">
+                {leaderboard.map((entry, index) => (
+                  <li key={entry.id ?? `${entry.mode}-${entry.timestamp}-${index}`}>
+                    <span>#{index + 1}</span>
+                    <div>
+                      <strong>{entry.mode}</strong>
+                      <small>{entry.list}</small>
+                    </div>
+                    <span>{entry.wpm} WPM</span>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+        </section>
+      </main>
+    )
   }
 
   return (
     <main className="app-shell">
       <section className="game-panel">
         <header className="topbar">
-          <h1>Typing Test</h1>
-          <button type="button" onClick={handleRestart} className="restart">
-            Restart
-          </button>
+          <div>
+            <span className="eyebrow">{MODE_CONFIG[selectedMode].label} mode</span>
+            <h1>Typing Test</h1>
+          </div>
+          <div className="header-actions">
+            <button type="button" className="secondary-button" onClick={goToMenu}>
+              Menu
+            </button>
+            <button type="button" className="secondary-button" onClick={startGame}>
+              Restart
+            </button>
+          </div>
         </header>
 
         <div className="stats">
@@ -149,7 +400,7 @@ function App() {
           </div>
           <div className="stat-box">
             <span className="label">WPM</span>
-            <strong>{wpm}</strong>
+            <strong>{currentWpm}</strong>
           </div>
           <div className="stat-box">
             <span className="label">Accuracy</span>
@@ -158,24 +409,35 @@ function App() {
         </div>
 
         <div className="text-display" aria-live="polite">
-          {renderText()}
+          {renderPrompt()}
         </div>
 
         <textarea
           ref={inputRef}
           value={input}
-          onChange={handleInput}
+          onChange={handleTyping}
           placeholder="Start typing here..."
-          disabled={completed}
           spellCheck={false}
           autoCapitalize="off"
           autoCorrect="off"
           autoComplete="off"
+          disabled={completed}
         />
 
-        {completed && (
+        {screen === 'summary' && lastResult && (
           <div className="result-banner">
-            Time's up! Final score: {wpm} WPM · Accuracy: {accuracy}%
+            <strong>Round complete!</strong>
+            <p>
+              {lastResult.wpm} WPM · {lastResult.accuracy}% accuracy · {lastResult.mode} mode
+            </p>
+            <div className="result-actions">
+              <button type="button" className="primary-button" onClick={startGame}>
+                Play again
+              </button>
+              <button type="button" className="secondary-button" onClick={goToMenu}>
+                Back to menu
+              </button>
+            </div>
           </div>
         )}
       </section>
