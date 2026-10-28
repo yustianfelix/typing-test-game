@@ -1,0 +1,186 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+
+const SAMPLE_TEXTS = [
+  'practice makes progress and progress creates confidence',
+  'typing quickly and accurately is a skill that improves with repetition',
+  'focus on rhythm clarity and calm breathing while you type',
+  'small daily practice turns hesitant keystrokes into smooth accuracy',
+  'a good typing habit starts with patience and consistent effort',
+  'learn to steady your hands and let your eyes stay ahead of the text',
+  'strong typing performance depends on speed precision and control',
+  'every mistake is feedback that helps you improve your technique',
+  'the best way to grow is to test yourself and keep moving forward',
+  'clean keystrokes and good posture support faster more accurate work',
+]
+
+const DEFAULT_TIME = 60
+
+function generateText() {
+  const wordCount = 18 + Math.floor(Math.random() * 8)
+  const words = []
+
+  for (let i = 0; i < wordCount; i += 1) {
+    const source = SAMPLE_TEXTS[Math.floor(Math.random() * SAMPLE_TEXTS.length)]
+    const candidates = source.split(' ')
+    const randomWord = candidates[Math.floor(Math.random() * candidates.length)]
+    words.push(randomWord)
+  }
+
+  return words.join(' ')
+}
+
+function App() {
+  const [text, setText] = useState(() => generateText())
+  const [input, setInput] = useState('')
+  const [timeLeft, setTimeLeft] = useState(DEFAULT_TIME)
+  const [isRunning, setIsRunning] = useState(false)
+  const [completed, setCompleted] = useState(false)
+  const [correctChars, setCorrectChars] = useState(0)
+  const [typedChars, setTypedChars] = useState(0)
+  const inputRef = useRef(null)
+
+  useEffect(() => {
+    if (!isRunning || completed) return
+
+    const timer = setInterval(() => {
+      setTimeLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer)
+          setIsRunning(false)
+          setCompleted(true)
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+
+    return () => clearInterval(timer)
+  }, [isRunning, completed])
+
+  useEffect(() => {
+    if (!completed) return
+    inputRef.current?.blur()
+  }, [completed])
+
+  const accuracy = useMemo(() => {
+    if (!typedChars) return 100
+    return Math.round((correctChars / typedChars) * 100)
+  }, [correctChars, typedChars])
+
+  const wpm = useMemo(() => {
+    if (timeLeft === DEFAULT_TIME && !isRunning && !completed && typedChars === 0) return 0
+    const secondsElapsed = DEFAULT_TIME - timeLeft
+    const minutes = secondsElapsed / 60 || 1 / 60
+    return Math.round((correctChars / 5) / minutes)
+  }, [correctChars, timeLeft, isRunning, completed, typedChars])
+
+  const handleInput = (event) => {
+    if (completed) return
+
+    const nextValue = event.target.value
+    setInput(nextValue)
+
+    if (!isRunning) {
+      setIsRunning(true)
+    }
+
+    let correct = 0
+    let typed = 0
+
+    for (let i = 0; i < nextValue.length; i += 1) {
+      typed += 1
+      if (nextValue[i] === text[i]) {
+        correct += 1
+      }
+    }
+
+    setTypedChars(typed)
+    setCorrectChars(correct)
+
+    if (nextValue === text) {
+      setCompleted(true)
+      setIsRunning(false)
+    }
+  }
+
+  const handleRestart = () => {
+    setText(generateText())
+    setInput('')
+    setTimeLeft(DEFAULT_TIME)
+    setIsRunning(false)
+    setCompleted(false)
+    setCorrectChars(0)
+    setTypedChars(0)
+    inputRef.current?.focus()
+  }
+
+  const renderText = () => {
+    return text.split('').map((char, index) => {
+      let className = 'char'
+
+      if (index < input.length) {
+        className += input[index] === char ? ' correct' : ' incorrect'
+      } else if (index === input.length) {
+        className += ' current'
+      }
+
+      return (
+        <span key={`${char}-${index}`} className={className}>
+          {char}
+        </span>
+      )
+    })
+  }
+
+  return (
+    <main className="app-shell">
+      <section className="game-panel">
+        <header className="topbar">
+          <h1>Typing Test</h1>
+          <button type="button" onClick={handleRestart} className="restart">
+            Restart
+          </button>
+        </header>
+
+        <div className="stats">
+          <div className="stat-box">
+            <span className="label">Time</span>
+            <strong>{timeLeft}s</strong>
+          </div>
+          <div className="stat-box">
+            <span className="label">WPM</span>
+            <strong>{wpm}</strong>
+          </div>
+          <div className="stat-box">
+            <span className="label">Accuracy</span>
+            <strong>{accuracy}%</strong>
+          </div>
+        </div>
+
+        <div className="text-display" aria-live="polite">
+          {renderText()}
+        </div>
+
+        <textarea
+          ref={inputRef}
+          value={input}
+          onChange={handleInput}
+          placeholder="Start typing here..."
+          disabled={completed}
+          spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
+          autoComplete="off"
+        />
+
+        {completed && (
+          <div className="result-banner">
+            Time's up! Final score: {wpm} WPM · Accuracy: {accuracy}%
+          </div>
+        )}
+      </section>
+    </main>
+  )
+}
+
+export default App
